@@ -1,13 +1,20 @@
 'use client'
 
 import { useState } from 'react'
-import { Scan, CheckCircle2, Loader2, Pencil, Send, RotateCcw, ExternalLink } from 'lucide-react'
+import { Scan, CheckCircle2, Loader2, Pencil, Send, RotateCcw, ExternalLink, MessageSquarePlus } from 'lucide-react'
 import { PersonalOpportunity } from '@/types'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { Skeleton } from '@/components/ui/Skeleton'
 
-type Stage = 'idle' | 'scanning' | 'opportunities' | 'generating' | 'editing' | 'published'
+type Stage =
+  | 'idle'
+  | 'topic-input'
+  | 'scanning'
+  | 'opportunities'
+  | 'generating'
+  | 'editing'
+  | 'published'
 
 interface GeneratedDraft {
   id: string
@@ -30,6 +37,10 @@ export default function CreatePage() {
   const [isEditing, setIsEditing] = useState(false)
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Topic path
+  const [topicInput, setTopicInput] = useState('')
+  const [topicOpportunity, setTopicOpportunity] = useState<PersonalOpportunity | null>(null)
 
   async function handleScan() {
     setStage('scanning')
@@ -75,6 +86,32 @@ export default function CreatePage() {
     setStage('editing')
   }
 
+  async function handleGenerateFromTopic() {
+    if (!topicInput.trim()) return
+    setStage('generating')
+    setError(null)
+
+    const res = await fetch('/api/generate-from-topic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: topicInput.trim() }),
+    })
+    const data = await res.json()
+
+    if (!res.ok) {
+      setError(data.error ?? 'Generation failed')
+      setStage('topic-input')
+      return
+    }
+
+    setTopicOpportunity(data.opportunity ?? null)
+    setSelectedOpp(null)
+    setDraft({ id: data.post.id, content: data.content, guardian: data.guardian })
+    setEditedContent(data.content)
+    setIsEditing(false)
+    setStage('editing')
+  }
+
   async function handlePublish() {
     if (!draft) return
     setError(null)
@@ -99,6 +136,8 @@ export default function CreatePage() {
     setStage('idle')
     setOpportunities([])
     setSelectedOpp(null)
+    setTopicOpportunity(null)
+    setTopicInput('')
     setDraft(null)
     setEditedContent('')
     setIsEditing(false)
@@ -106,29 +145,97 @@ export default function CreatePage() {
     setError(null)
   }
 
+  // The topic currently being written about (for the editing stage summary pill)
+  const activeTopic = selectedOpp?.topic ?? topicOpportunity?.topic ?? topicInput
+
   return (
     <div className="p-6 max-w-3xl mx-auto">
       <div className="mb-6">
         <h1 className="text-xl font-bold text-slate-100">Create a post</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Scout trending signals → pick an angle → generate → edit → publish
+          Let Isograph find opportunities, or tell it what you want to write about.
         </p>
       </div>
 
-      {/* Stage: idle */}
+      {/* Stage: idle — two paths */}
       {stage === 'idle' && (
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center">
-          <div className="w-12 h-12 bg-indigo-600/20 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Scan className="w-6 h-6 text-indigo-400" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Scout path */}
+          <button
+            onClick={handleScan}
+            className="text-left bg-slate-900 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-6 transition-all group"
+          >
+            <div className="w-10 h-10 bg-indigo-600/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-indigo-600/30 transition-colors">
+              <Scan className="w-5 h-5 text-indigo-400" />
+            </div>
+            <h2 className="text-sm font-semibold text-slate-200 mb-1">Scout for opportunities</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Isograph scans Reddit, news, and trending signals to find content angles tailored to your background.
+            </p>
+          </button>
+
+          {/* Topic path */}
+          <button
+            onClick={() => setStage('topic-input')}
+            className="text-left bg-slate-900 border border-slate-800 hover:border-emerald-500/50 rounded-2xl p-6 transition-all group"
+          >
+            <div className="w-10 h-10 bg-emerald-600/20 rounded-xl flex items-center justify-center mb-4 group-hover:bg-emerald-600/30 transition-colors">
+              <MessageSquarePlus className="w-5 h-5 text-emerald-400" />
+            </div>
+            <h2 className="text-sm font-semibold text-slate-200 mb-1">I know what I want to write</h2>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Describe your topic in your own words. Isograph will shape it into a post that sounds like you.
+            </p>
+          </button>
+        </div>
+      )}
+
+      {/* Stage: topic-input */}
+      {stage === 'topic-input' && (
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-200 mb-1">What do you want to write about?</h2>
+            <p className="text-xs text-slate-400">
+              Describe your topic, angle, or idea in plain language. A few words or a full sentence — whatever feels natural.
+            </p>
           </div>
-          <h2 className="text-base font-semibold text-slate-200 mb-2">Ready to scout</h2>
-          <p className="text-sm text-slate-400 mb-6">
-            Isograph will scan Reddit, news, and trending signals for content opportunities tailored to your background.
+
+          <textarea
+            value={topicInput}
+            onChange={e => setTopicInput(e.target.value)}
+            placeholder="e.g. Why most teams over-engineer their data pipelines, or the leadership lesson I learned from a failed launch"
+            rows={4}
+            className="w-full bg-slate-800 border border-slate-700 text-slate-100 text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 resize-none leading-relaxed placeholder:text-slate-500"
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && topicInput.trim().length >= 3) {
+                handleGenerateFromTopic()
+              }
+            }}
+          />
+
+          {error && (
+            <p className="text-xs text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          <div className="flex gap-3">
+            <Button variant="secondary" onClick={() => { setStage('idle'); setError(null) }} className="flex-1">
+              Back
+            </Button>
+            <Button
+              onClick={handleGenerateFromTopic}
+              disabled={topicInput.trim().length < 3}
+              className="flex-1"
+              size="lg"
+            >
+              Generate post
+            </Button>
+          </div>
+
+          <p className="text-xs text-slate-500 text-center">
+            Isograph will use your style model and profile to write a post that sounds like you.
           </p>
-          <Button onClick={handleScan} size="lg">
-            <Scan className="w-4 h-4" />
-            Scan for opportunities
-          </Button>
         </div>
       )}
 
@@ -225,13 +332,13 @@ export default function CreatePage() {
       {/* Stage: editing */}
       {stage === 'editing' && draft && (
         <div className="space-y-4">
-          {/* Selected opportunity summary */}
-          {selectedOpp && (
+          {/* Topic summary pill */}
+          {activeTopic && (
             <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 flex items-center gap-3">
               <CheckCircle2 className="w-4 h-4 text-indigo-400 shrink-0" />
               <div className="min-w-0">
                 <p className="text-xs text-slate-500">Writing about</p>
-                <p className="text-sm font-medium text-slate-200 truncate">{selectedOpp.topic}</p>
+                <p className="text-sm font-medium text-slate-200 truncate">{activeTopic}</p>
               </div>
             </div>
           )}
@@ -283,7 +390,17 @@ export default function CreatePage() {
           )}
 
           <div className="flex gap-3">
-            <Button variant="secondary" onClick={() => setStage('opportunities')} className="flex-1">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (topicOpportunity) {
+                  setStage('topic-input')
+                } else {
+                  setStage('opportunities')
+                }
+              }}
+              className="flex-1"
+            >
               Back
             </Button>
             <Button onClick={handlePublish} className="flex-1" size="lg">

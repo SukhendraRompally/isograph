@@ -4,7 +4,7 @@ import { getAzureClient, DEPLOYMENT } from '@/lib/azureClient'
 import { runBridge } from '@/lib/agents/bridge'
 import { runGuardian } from '@/lib/agents/guardian'
 import { checkPostQuota, incrementPostUsage } from '@/lib/usageLimits'
-import type { UserProfile, ContentOpportunity, PersonalOpportunity } from '@/types'
+import type { UserProfile, PersonalOpportunity } from '@/types'
 
 /**
  * POST /api/generate-from-topic

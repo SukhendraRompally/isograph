@@ -1,6 +1,5 @@
 import Link from 'next/link'
-import { CheckCircle2, TrendingUp, Zap, BarChart2 } from 'lucide-react'
-import { PLAN_DISPLAY } from '@/lib/stripe/plans'
+import { TrendingUp, Zap, BarChart2 } from 'lucide-react'
 
 export default function LandingPage() {
   return (
@@ -80,49 +79,6 @@ export default function LandingPage() {
               <p className="text-sm text-slate-400 leading-relaxed">{feat.body}</p>
             </div>
           ))}
-        </div>
-      </section>
-
-      {/* Pricing */}
-      <section className="px-6 py-16 max-w-3xl mx-auto" id="pricing">
-        <h2 className="text-2xl font-bold text-slate-100 text-center mb-3">Simple pricing</h2>
-        <p className="text-sm text-slate-400 text-center mb-10">Free forever. Upgrade when you&apos;re ready to scale.</p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {(['free', 'pro'] as const).map(plan => {
-            const info = PLAN_DISPLAY[plan]
-            return (
-              <div
-                key={plan}
-                className={`bg-slate-900 border rounded-2xl p-6 ${
-                  plan === 'pro' ? 'border-indigo-500/40' : 'border-slate-800'
-                }`}
-              >
-                <div className="mb-4">
-                  <p className="text-base font-bold text-slate-200">{info.name}</p>
-                  <p className="text-2xl font-black text-slate-100 mt-1">{info.price}</p>
-                </div>
-                <ul className="space-y-2 mb-6">
-                  {info.features.map(f => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-slate-400">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  href="/signup"
-                  className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition-colors ${
-                    plan === 'pro'
-                      ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                  }`}
-                >
-                  {plan === 'pro' ? 'Start with Pro' : 'Start free'}
-                </Link>
-              </div>
-            )
-          })}
         </div>
       </section>
 

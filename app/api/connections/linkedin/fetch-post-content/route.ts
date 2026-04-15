@@ -75,17 +75,29 @@ export async function POST(request: Request) {
   // ── Run engagement-weighted style inference ──────────────────────────────
   const inferredModel = await inferStyleFromAnalytics(postsWithText)
 
-  // ── Load current style model ─────────────────────────────────────────────
-  const { data: currentStyleRow } = await supabase
-    .from('style_models')
-    .select('id, model, version')
-    .eq('user_id', user.id)
-    .eq('is_current', true)
-    .single()
+  // ── Load current style model + onboarding path ──────────────────────────
+  const [{ data: currentStyleRow }, { data: profileRow }] = await Promise.all([
+    supabase
+      .from('style_models')
+      .select('id, model, version')
+      .eq('user_id', user.id)
+      .eq('is_current', true)
+      .single(),
+    supabase
+      .from('user_profiles')
+      .select('onboarding_path')
+      .eq('id', user.id)
+      .single(),
+  ])
 
-  // Blend: 60% analytics-inferred (real performance data), 40% existing
+  const onboardingPath = profileRow?.onboarding_path ?? null
   const existingModel = currentStyleRow?.model ?? null
-  const finalModel = existingModel
+
+  // Blending rule:
+  //   linkedin path → inferred data IS the model (no blend with old data)
+  //   manual path   → inferred data overrides stated preference 60/40
+  //   no path set   → same as manual (safe default)
+  const finalModel = (existingModel && onboardingPath !== 'linkedin')
     ? blendStyleModels(existingModel, inferredModel, 0.4)
     : inferredModel
 

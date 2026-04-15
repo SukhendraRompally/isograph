@@ -17,6 +17,8 @@ create table public.user_profiles (
   location text,
   avatar_url text,
   onboarding_completed boolean default false,
+  onboarding_path text check (onboarding_path in ('linkedin','manual')),
+  audience_context jsonb default '{}',
   created_at timestamptz default now(),
   updated_at timestamptz default now()
 );

@@ -51,6 +51,7 @@ export default function OnboardingInterestsPage() {
         headline,
         interests: selectedInterests,
         personal_constraints: constraints,
+        onboarding_path: 'manual',
       }),
     })
 
@@ -67,12 +68,10 @@ export default function OnboardingInterestsPage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-lg">
+        {/* Step 2 of 3 — manual path */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          {[1, 2, 3].map(step => (
-            <div
-              key={step}
-              className={`w-2 h-2 rounded-full ${step === 2 ? 'bg-indigo-500' : 'bg-slate-700'}`}
-            />
+          {[1, 2, 3].map(s => (
+            <div key={s} className={`w-2 h-2 rounded-full ${s <= 2 ? 'bg-indigo-500' : 'bg-slate-700'}`} />
           ))}
         </div>
 

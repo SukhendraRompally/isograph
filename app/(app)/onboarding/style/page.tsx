@@ -33,12 +33,10 @@ export default function OnboardingStylePage() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12">
       <div className="w-full max-w-4xl">
+        {/* Step 3 of 3 — manual path */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          {[1, 2, 3].map(step => (
-            <div
-              key={step}
-              className={`w-2 h-2 rounded-full ${step === 3 ? 'bg-indigo-500' : 'bg-slate-700'}`}
-            />
+          {[1, 2, 3].map(s => (
+            <div key={s} className="w-2 h-2 rounded-full bg-indigo-500" />
           ))}
         </div>
 

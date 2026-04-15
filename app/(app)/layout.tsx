@@ -36,7 +36,9 @@ export default async function AppLayout({
     .single()
 
   // Send to onboarding if not yet complete
-  // (middleware handles this too, but belt-and-suspenders for direct navigation)
+  if (!profile?.onboarding_completed) {
+    redirect('/onboarding/connect')
+  }
 
   const displayName = profile?.display_name ?? user.email?.split('@')[0] ?? 'User'
   const initials = displayName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()

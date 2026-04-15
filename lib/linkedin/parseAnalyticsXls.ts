@@ -1,39 +1,45 @@
 /**
  * Client-side parser for LinkedIn Creator Analytics XLS export.
  *
- * LinkedIn exports an Excel file with 5 tabs:
- *   Discover     — impressions + profile views over time
- *   Engagement   — reactions, comments, reposts, engagement rate over time
- *   Top Posts    — per-post text + metrics (core for style inference)
- *   Followers    — follower growth over time
- *   Demographics — audience breakdown by job function, industry, seniority, location
+ * Actual sheet structure (observed from real export):
+ *
+ * "Top Posts" tab — two side-by-side tables on the same sheet:
+ *   Left:  Post URL | Post Publish Date | Engagements
+ *   Right: Post URL | Post Publish Date | Impressions
+ *   (independently sorted; no post text in this export)
+ *
+ * "Demographics" tab — flat 3-column table:
+ *   Top Demographics | Value | Percentage
+ *   Company | Amazon | < 1%
+ *   Location | Greater Bengaluru Area | 10%
+ *   ...
  *
  * Usage (browser only — dynamic import xlsx):
  *   const XLSX = await import('xlsx')
  *   const wb = XLSX.read(buffer, { type: 'array' })
- *   const result = parseLinkedInAnalyticsXls(wb)
+ *   const result = parseLinkedInAnalyticsXls(wb, XLSX.utils)
  */
 
-// We type the workbook loosely so this file doesn't import xlsx at the module level
-// (avoids SSR issues — xlsx is dynamic-imported by the component).
 export interface XlsWorkbook {
   SheetNames: string[]
   Sheets: Record<string, unknown>
 }
 
 export interface TopPost {
-  text: string
+  url: string
+  text: string           // empty — not available in analytics export
   publishedDate: string
   impressions: number
+  engagements: number    // total interactions (LinkedIn "Engagements" column)
   reactions: number
   comments: number
   reposts: number
   clicks: number
-  engagementRate: number   // 0–100 (e.g. 4.2 = 4.2%)
+  engagementRate: number // 0–100 (e.g. 4.2 = 4.2%)
 }
 
 export interface DemographicSegment {
-  category: string    // e.g. "Job function", "Industry", "Seniority"
+  category: string
   segments: { name: string; pct: number }[]
 }
 
@@ -69,197 +75,200 @@ export function parseLinkedInAnalyticsXls(wb: XlsWorkbook, xlsxUtils: any): Anal
 }
 
 // ─── Top Posts tab ───────────────────────────────────────────────────────────
+// Layout: two side-by-side tables.
+//   Left cols:  Post URL | Post Publish Date | Engagements
+//   (gap col)
+//   Right cols: Post URL | Post Publish Date | Impressions
+// We find the header row, locate both "Post URL" columns, and merge by URL.
 
-function parseTopPostsSheet(
-  wb: XlsWorkbook,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  xlsxUtils: any
-): TopPost[] {
-  const sheet = findSheet(wb, ['top posts', 'top post', 'posts'])
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseTopPostsSheet(wb: XlsWorkbook, xlsxUtils: any): TopPost[] {
+  const sheet = findSheet(wb, ['top post', 'posts'])
   if (!sheet) return []
 
   const rows = xlsxUtils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][]
   if (rows.length < 2) return []
 
-  // Find the header row — LinkedIn sometimes puts metadata rows at the top
-  const headerRowIdx = rows.findIndex(row =>
-    row.some(cell => typeof cell === 'string' && /impression|post|engagement/i.test(cell))
+  // Find the header row — contains "Post URL"
+  const headerIdx = rows.findIndex(row =>
+    (row as unknown[]).some(c => typeof c === 'string' && c.toLowerCase().includes('post url'))
   )
-  if (headerRowIdx === -1) return []
+  if (headerIdx === -1) return []
 
-  const headers = (rows[headerRowIdx] as string[]).map(h =>
+  const headers = (rows[headerIdx] as string[]).map(h =>
     typeof h === 'string' ? h.toLowerCase().trim() : ''
   )
 
-  const col = (patterns: string[]) =>
-    headers.findIndex(h => patterns.some(p => h.includes(p)))
+  // There are TWO "Post URL" columns — find both
+  const firstUrlCol = headers.findIndex(h => h.includes('post url'))
+  const secondUrlCol = headers.findIndex((h, i) => i > firstUrlCol && h.includes('post url'))
 
-  const postCol        = col(['post', 'content', 'text', 'sharecommentary'])
-  const dateCol        = col(['date', 'published', 'created'])
-  const impressionsCol = col(['impression'])
-  const reactionsCol   = col(['reaction', 'like'])
-  const commentsCol    = col(['comment'])
-  const repostsCol     = col(['repost', 'share'])
-  const clicksCol      = col(['click'])
-  const engagementCol  = col(['engagement rate', 'engagement'])
+  // Engagements is near the first URL col; Impressions near the second
+  const engCol = headers.findIndex(h => h.includes('engagement'))
+  const impCol = headers.findIndex((h, i) =>
+    i > (secondUrlCol > -1 ? secondUrlCol : firstUrlCol + 1) && h.includes('impression')
+  )
+  // Also check for impressions column even if only one URL col exists
+  const impColFallback = headers.findIndex(h => h.includes('impression'))
 
-  if (postCol === -1) return []
+  const actualImpCol = impCol >= 0 ? impCol : impColFallback
 
-  const posts: TopPost[] = []
+  // Date columns (take first occurrence per table)
+  const dateCol1 = headers.findIndex((h, i) => i > firstUrlCol && h.includes('date'))
+  const dateCol2 = secondUrlCol >= 0
+    ? headers.findIndex((h, i) => i > secondUrlCol && h.includes('date'))
+    : -1
 
-  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+  // Build maps: URL → metric
+  const engMap = new Map<string, number>()
+  const impMap = new Map<string, number>()
+  const dateMap = new Map<string, string>()
+
+  for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i] as unknown[]
-    const text = String(row[postCol] ?? '').trim()
-    if (!text || text.length < 20) continue
 
-    const impressions   = toNum(impressionsCol >= 0 ? row[impressionsCol] : 0)
-    const reactions     = toNum(reactionsCol  >= 0 ? row[reactionsCol]   : 0)
-    const comments      = toNum(commentsCol   >= 0 ? row[commentsCol]    : 0)
-    const reposts       = toNum(repostsCol    >= 0 ? row[repostsCol]     : 0)
-    const clicks        = toNum(clicksCol     >= 0 ? row[clicksCol]      : 0)
-
-    // Engagement rate: use explicit column if available, else calculate
-    let engagementRate: number
-    if (engagementCol >= 0 && row[engagementCol] !== '' && row[engagementCol] != null) {
-      const raw = toNum(row[engagementCol])
-      // LinkedIn sometimes exports as 0.042 (fraction) or 4.2 (percent)
-      engagementRate = raw < 1 ? raw * 100 : raw
-    } else if (impressions > 0) {
-      engagementRate = ((reactions + comments + reposts + clicks) / impressions) * 100
-    } else {
-      engagementRate = 0
+    // Left table: URL → engagements
+    if (firstUrlCol >= 0) {
+      const url = String(row[firstUrlCol] ?? '').trim()
+      if (url && url.startsWith('http')) {
+        if (engCol >= 0) engMap.set(url, toNum(row[engCol]))
+        if (dateCol1 >= 0) dateMap.set(url, String(row[dateCol1] ?? ''))
+      }
     }
 
+    // Right table: URL → impressions
+    if (secondUrlCol >= 0) {
+      const url = String(row[secondUrlCol] ?? '').trim()
+      if (url && url.startsWith('http')) {
+        if (actualImpCol >= 0) impMap.set(url, toNum(row[actualImpCol]))
+        if (!dateMap.has(url) && dateCol2 >= 0) {
+          dateMap.set(url, String(row[dateCol2] ?? ''))
+        }
+      }
+    } else if (actualImpCol >= 0 && firstUrlCol >= 0) {
+      // Single table with both columns
+      const url = String(row[firstUrlCol] ?? '').trim()
+      if (url && url.startsWith('http')) {
+        impMap.set(url, toNum(row[actualImpCol]))
+      }
+    }
+  }
+
+  // Merge both maps by URL (avoid Set/Map iterator spread for TS compat)
+  const urlSet: Record<string, true> = {}
+  engMap.forEach((_, k) => { urlSet[k] = true })
+  impMap.forEach((_, k) => { urlSet[k] = true })
+  const posts: TopPost[] = []
+
+  for (const url of Object.keys(urlSet)) {
+    if (!url) continue
+    const engagements = engMap.get(url) ?? 0
+    const impressions = impMap.get(url) ?? 0
+    const engagementRate = impressions > 0
+      ? Math.round((engagements / impressions) * 10000) / 100
+      : 0
+
     posts.push({
-      text,
-      publishedDate: dateCol >= 0 ? String(row[dateCol] ?? '') : '',
+      url,
+      text: '',   // Not available in analytics export
+      publishedDate: dateMap.get(url) ?? '',
       impressions,
-      reactions,
-      comments,
-      reposts,
-      clicks,
-      engagementRate: Math.round(engagementRate * 100) / 100,
+      engagements,
+      reactions: engagements,  // "Engagements" covers all interactions
+      comments: 0,
+      reposts: 0,
+      clicks: 0,
+      engagementRate,
     })
   }
 
-  // Sort by impressions descending, take top 50
-  return posts
-    .sort((a, b) => b.impressions - a.impressions)
-    .slice(0, 50)
+  // Sort by impressions descending
+  return posts.sort((a, b) => b.impressions - a.impressions).slice(0, 50)
 }
 
 // ─── Demographics tab ────────────────────────────────────────────────────────
+// Flat 3-column table:
+//   Top Demographics | Value | Percentage
+//   Company          | Amazon | < 1%
+//   Location         | Greater Bengaluru Area | 10%
 
-function parseDemographicsSheet(
-  wb: XlsWorkbook,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  xlsxUtils: any
-): DemographicSegment[] {
-  const sheet = findSheet(wb, ['demographic', 'audience'])
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseDemographicsSheet(wb: XlsWorkbook, xlsxUtils: any): DemographicSegment[] {
+  const sheet = findSheet(wb, ['demographic'])
   if (!sheet) return []
 
   const rows = xlsxUtils.sheet_to_json(sheet, { header: 1, defval: '' }) as unknown[][]
-  const segments: DemographicSegment[] = []
 
-  // LinkedIn demographics sheet has stacked mini-tables:
-  // Row: "Job function"  (category header)
-  // Row: "Software"  42%
-  // Row: "Marketing" 28%
-  // ... blank row ...
-  // Row: "Industry"
-  // etc.
+  // Find header row
+  const headerIdx = rows.findIndex(row =>
+    (row as unknown[]).some(c =>
+      typeof c === 'string' && c.toLowerCase().includes('demographic')
+    )
+  )
+  if (headerIdx === -1) return []
 
-  let currentCategory = ''
-  let currentSegments: { name: string; pct: number }[] = []
+  // Group by category (col 0): { Company: [...], Location: [...], ... }
+  const categoryMap = new Map<string, { name: string; pct: number }[]>()
 
-  const CATEGORY_PATTERNS = [
-    'job function', 'industry', 'seniority', 'location', 'company size',
-    'country', 'region', 'function',
-  ]
+  for (let i = headerIdx + 1; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    const category = String(row[0] ?? '').trim()
+    const value    = String(row[1] ?? '').trim()
+    const pctStr   = String(row[2] ?? '').trim()
 
-  for (const rawRow of rows) {
-    const row = rawRow as unknown[]
-    const first = String(row[0] ?? '').trim()
-    const second = String(row[1] ?? '').trim()
+    if (!category || !value) continue
 
-    if (!first) {
-      // Blank row — save current category and start fresh
-      if (currentCategory && currentSegments.length > 0) {
-        segments.push({ category: currentCategory, segments: currentSegments.slice(0, 8) })
-        currentCategory = ''
-        currentSegments = []
-      }
-      continue
-    }
+    // Parse: "10%" → 10, "< 1%" → 0.5
+    const pct = pctStr.includes('<')
+      ? 0.5
+      : parseFloat(pctStr.replace('%', '').trim()) || 0
 
-    const isCategory = CATEGORY_PATTERNS.some(p => first.toLowerCase().includes(p))
-    if (isCategory && !second) {
-      // Save previous if exists
-      if (currentCategory && currentSegments.length > 0) {
-        segments.push({ category: currentCategory, segments: currentSegments.slice(0, 8) })
-      }
-      currentCategory = first
-      currentSegments = []
-      continue
-    }
-
-    // Data row: name + percentage
-    if (currentCategory && first && (second.includes('%') || !isNaN(parseFloat(second)))) {
-      const pct = parseFloat(second.replace('%', ''))
-      if (!isNaN(pct)) {
-        currentSegments.push({ name: first, pct })
-      }
-    }
+    if (!categoryMap.has(category)) categoryMap.set(category, [])
+    categoryMap.get(category)!.push({ name: value, pct })
   }
 
-  // Don't forget last category
-  if (currentCategory && currentSegments.length > 0) {
-    segments.push({ category: currentCategory, segments: currentSegments.slice(0, 8) })
-  }
-
-  return segments
+  const result: DemographicSegment[] = []
+  categoryMap.forEach((segments, category) => {
+    result.push({ category, segments: segments.slice(0, 8) })
+  })
+  return result
 }
 
 // ─── Engagement tab (period totals) ─────────────────────────────────────────
 
-function parseEngagementSheet(
-  wb: XlsWorkbook,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  xlsxUtils: any
-): AnalyticsImportData['periodSummary'] {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseEngagementSheet(wb: XlsWorkbook, xlsxUtils: any): AnalyticsImportData['periodSummary'] {
   const summary = { impressions: 0, reactions: 0, comments: 0, reposts: 0, newFollowers: 0 }
 
-  // Try Engagement sheet
   const engSheet = findSheet(wb, ['engagement'])
   if (engSheet) {
     const rows = xlsxUtils.sheet_to_json(engSheet, { header: 1, defval: '' }) as unknown[][]
     const headerIdx = rows.findIndex(r =>
-      r.some(c => typeof c === 'string' && /impression|reaction|engagement/i.test(c))
+      (r as unknown[]).some(c => typeof c === 'string' && /impression|reaction|engagement/i.test(c))
     )
     if (headerIdx >= 0) {
       const headers = (rows[headerIdx] as string[]).map(h => String(h).toLowerCase())
       const col = (p: string) => headers.findIndex(h => h.includes(p))
-      const impCol = col('impression')
-      const reactCol = col('reaction')
+      const impCol     = col('impression')
+      const reactCol   = col('reaction')
       const commentCol = col('comment')
-      const repostCol = col('repost')
+      const repostCol  = col('repost')
 
       for (let i = headerIdx + 1; i < rows.length; i++) {
         const row = rows[i] as unknown[]
-        if (impCol >= 0)   summary.impressions += toNum(row[impCol])
-        if (reactCol >= 0) summary.reactions   += toNum(row[reactCol])
-        if (commentCol >= 0) summary.comments  += toNum(row[commentCol])
-        if (repostCol >= 0) summary.reposts    += toNum(row[repostCol])
+        if (impCol >= 0)     summary.impressions += toNum(row[impCol])
+        if (reactCol >= 0)   summary.reactions   += toNum(row[reactCol])
+        if (commentCol >= 0) summary.comments    += toNum(row[commentCol])
+        if (repostCol >= 0)  summary.reposts     += toNum(row[repostCol])
       }
     }
   }
 
-  // Try Followers sheet
   const follSheet = findSheet(wb, ['follower'])
   if (follSheet) {
     const rows = xlsxUtils.sheet_to_json(follSheet, { header: 1, defval: '' }) as unknown[][]
     const headerIdx = rows.findIndex(r =>
-      r.some(c => typeof c === 'string' && /follower|new/i.test(c))
+      (r as unknown[]).some(c => typeof c === 'string' && /follower|new/i.test(c))
     )
     if (headerIdx >= 0) {
       const headers = (rows[headerIdx] as string[]).map(h => String(h).toLowerCase())

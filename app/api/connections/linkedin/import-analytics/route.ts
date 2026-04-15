@@ -68,8 +68,8 @@ export async function POST(request: Request) {
       return `${d.category}: ${top3}`
     })
 
-  // ── Top posts for display (URL + metrics) ────────────────────────────────
-  const topPostsDisplay = topPosts.slice(0, 10).map(p => ({
+  // ── All posts for display + downstream fetch (no cap — use everything) ───
+  const topPostsDisplay = topPosts.map(p => ({
     url: p.url,
     publishedDate: p.publishedDate,
     impressions: p.impressions,
@@ -86,6 +86,5 @@ export async function POST(request: Request) {
     audienceSummary,
     topPostsDisplay,
     styleModelUpdated: false,
-    note: 'Analytics and demographics saved. Style model training requires post text — upload your Posts.csv in the section below.',
   })
 }

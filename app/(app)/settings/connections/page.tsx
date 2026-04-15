@@ -22,7 +22,6 @@ interface ImportResult {
   audienceSummary: string[]
   topPostsDisplay: TopPostDisplay[]
   styleModelUpdated: boolean
-  note?: string
   periodSummary: {
     impressions: number
     reactions: number
@@ -30,6 +29,13 @@ interface ImportResult {
     reposts: number
     newFollowers: number
   }
+}
+
+interface ContentInsights {
+  topTopics: string[]
+  highEngagementTopics: string[]
+  contentFormats: string[]
+  audienceThemes: string[]
 }
 
 export default function ConnectionsPage() {
@@ -307,11 +313,11 @@ interface FetchResult {
   failedCount: number
   newVersion: number
   postPreviews: PostPreview[]
+  contentInsights?: ContentInsights
 }
 
 function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onReset: () => void }) {
   const [fetching, setFetching] = useState(false)
-  const [fetchProgress, setFetchProgress] = useState('')
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
 
@@ -319,13 +325,13 @@ function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onR
     if (!result.topPostsDisplay?.length) return
     setFetching(true)
     setFetchError(null)
-    setFetchProgress('Fetching post content from LinkedIn…')
 
     try {
+      // Pass ALL posts — no cap
       const res = await fetch('/api/connections/linkedin/fetch-post-content', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ posts: result.topPostsDisplay, maxPosts: 20 }),
+        body: JSON.stringify({ posts: result.topPostsDisplay }),
       })
       const data = await res.json()
 
@@ -338,7 +344,6 @@ function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onR
       setFetchError('Network error. Try again.')
     } finally {
       setFetching(false)
-      setFetchProgress('')
     }
   }
 
@@ -409,9 +414,8 @@ function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onR
             <div>
               <p className="text-sm font-medium text-indigo-300">Train your style model</p>
               <p className="text-xs text-indigo-400/70 mt-0.5">
-                We&apos;ll fetch the text from your top {Math.min(result.topPostsDisplay?.length ?? 0, 20)} posts,
-                weight them by engagement rate, and update your style model.
-                Takes ~{Math.ceil(Math.min(result.topPostsDisplay?.length ?? 0, 20) * 1.1 / 60)} min.
+                Reads all {result.topPostsDisplay?.length ?? 0} posts, weights by engagement,
+                and extracts your writing style + the topics that resonate with your audience.
               </p>
             </div>
           </div>
@@ -421,40 +425,88 @@ function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onR
             className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {fetching ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                {fetchProgress || 'Fetching posts…'}
-              </>
+              <><Loader2 className="w-4 h-4 animate-spin" /> Reading posts…</>
             ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                Fetch posts &amp; train style model
-              </>
+              <><Sparkles className="w-4 h-4" /> Fetch posts &amp; train model</>
             )}
           </button>
           {fetchError && <p className="text-xs text-red-400">{fetchError}</p>}
         </div>
       ) : (
-        <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-3">
-          <div className="flex items-start gap-2">
+        <div className="space-y-3">
+          {/* Style model updated */}
+          <div className="flex items-start gap-2 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
             <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <div>
               <p className="text-sm font-medium text-emerald-300">Style model updated (v{fetchResult.newVersion})</p>
               <p className="text-xs text-emerald-400/70 mt-0.5">
-                Read {fetchResult.fetchedCount} posts
-                {fetchResult.failedCount > 0 ? ` · ${fetchResult.failedCount} skipped (private/unavailable)` : ''}
+                {fetchResult.fetchedCount} posts read
+                {fetchResult.failedCount > 0 ? ` · ${fetchResult.failedCount} private/unavailable` : ''}
               </p>
             </div>
           </div>
-          {fetchResult.postPreviews?.length > 0 && (
-            <div className="space-y-1.5">
-              <p className="text-xs text-slate-400 font-medium">Posts used for training</p>
-              {fetchResult.postPreviews.map((p, i) => (
-                <div key={i} className="flex items-start gap-2 px-2 py-1.5 bg-slate-800/60 rounded-lg">
-                  <span className="text-xs text-emerald-400 font-medium shrink-0">{p.engagementRate}%</span>
-                  <p className="text-xs text-slate-400 leading-relaxed">{p.textPreview}</p>
+
+          {/* Topic insights */}
+          {fetchResult.contentInsights && (
+            <div className="space-y-3">
+              {fetchResult.contentInsights.highEngagementTopics.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-slate-300 mb-1.5">
+                    Topics your audience engages with most
+                    <span className="text-slate-500 font-normal ml-1">— Scout will prioritise these</span>
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fetchResult.contentInsights.highEngagementTopics.map(t => (
+                      <span key={t} className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-              ))}
+              )}
+              {fetchResult.contentInsights.topTopics.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-slate-300 mb-1.5">Topics you cover</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fetchResult.contentInsights.topTopics.map(t => (
+                      <span key={t} className="px-2 py-0.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-full text-xs">
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {fetchResult.contentInsights.contentFormats.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-slate-300 mb-1.5">Your content formats</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {fetchResult.contentInsights.contentFormats.map(f => (
+                      <span key={f} className="px-2 py-0.5 bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 rounded-full text-xs">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Post previews */}
+          {fetchResult.postPreviews?.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-slate-400 mb-1.5">Highest-engagement posts used for training</p>
+              <div className="space-y-1.5">
+                {fetchResult.postPreviews.map((p, i) => (
+                  <div key={i} className="flex items-start gap-2 px-3 py-2 bg-slate-800 rounded-lg">
+                    <span className="text-xs font-medium text-emerald-400 shrink-0 w-9">{p.engagementRate}%</span>
+                    <p className="text-xs text-slate-400 leading-relaxed flex-1">{p.textPreview}</p>
+                    <a href={p.url} target="_blank" rel="noopener noreferrer"
+                      className="text-slate-600 hover:text-indigo-400 shrink-0 transition-colors">
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>

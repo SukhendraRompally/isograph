@@ -1,23 +1,24 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { scrapeLinkedInPosts } from '@/lib/linkedin/scrapePost'
-import { inferStyleFromAnalytics, blendStyleModels } from '@/lib/styleInference'
+import { inferStyleFromAnalytics, blendStyleModels, extractContentInsights } from '@/lib/styleInference'
 import type { TopPost } from '@/lib/linkedin/parseAnalyticsXls'
+
+// Allow up to 5 minutes on Vercel Pro — gracefully ignored on hobby plan
+export const maxDuration = 300
 
 /**
  * POST /api/connections/linkedin/fetch-post-content
  *
- * Takes top post URLs + their engagement metrics (from analytics XLS),
- * fetches the post text from each LinkedIn URL, then runs
- * engagement-weighted style inference.
+ * Takes ALL post URLs + engagement metrics from the analytics XLS,
+ * fetches post text from each LinkedIn URL, then runs two things in parallel:
+ *   1. Engagement-weighted style inference → updates style_models
+ *   2. Topic/format/theme extraction → updates user_profiles
+ *      - topTopics saved to interests (Scout uses them immediately)
+ *      - all insights saved to audience_context
  *
- * Body: {
- *   posts: { url, impressions, engagements, engagementRate, publishedDate }[]
- *   maxPosts?: number  // default 20 — limits scraping time
- * }
- *
- * This is intentionally server-side: the scraping must happen from the
- * server (not the browser) to avoid CORS blocks from LinkedIn.
+ * Scraping: batches of 3 concurrent with 2s gap between batches.
+ * 50 posts ≈ 20s. No artificial post cap — use everything LinkedIn gives.
  */
 export async function POST(request: Request) {
   const supabase = createClient()
@@ -32,78 +33,73 @@ export async function POST(request: Request) {
     engagementRate: number
     publishedDate: string
   }[]
-  const maxPosts: number = body.maxPosts ?? 20
 
   if (!rawPosts || rawPosts.length === 0) {
     return NextResponse.json({ error: 'No post URLs provided' }, { status: 400 })
   }
 
-  // Take top N by impressions (already sorted from XLS import)
-  const postsToFetch = rawPosts.slice(0, maxPosts)
-  const urls = postsToFetch.map(p => p.url)
+  const urls = rawPosts.map(p => p.url)
 
-  // ── Scrape post content from LinkedIn URLs ───────────────────────────────
+  // ── Scrape all post URLs ──────────────────────────────────────────────────
   const scraped = await scrapeLinkedInPosts(urls)
 
-  // Merge scraped text back with engagement data
   const postsWithText: TopPost[] = scraped
     .map((s, i) => ({
       url: s.url,
       text: s.text,
-      publishedDate: postsToFetch[i].publishedDate,
-      impressions: postsToFetch[i].impressions,
-      engagements: postsToFetch[i].engagements,
-      reactions: postsToFetch[i].engagements,
+      publishedDate: rawPosts[i].publishedDate,
+      impressions: rawPosts[i].impressions,
+      engagements: rawPosts[i].engagements,
+      reactions: rawPosts[i].engagements,
       comments: 0,
       reposts: 0,
       clicks: 0,
-      engagementRate: postsToFetch[i].engagementRate,
+      engagementRate: rawPosts[i].engagementRate,
     }))
-    .filter(p => p.text.length > 30)  // drop posts we couldn't read
+    .filter(p => p.text.length > 30)
 
   const fetchedCount = postsWithText.length
   const failedCount = scraped.length - fetchedCount
 
   if (fetchedCount < 2) {
     return NextResponse.json({
-      error: `Could only read ${fetchedCount} post(s). LinkedIn may be rate-limiting. Try again in a few minutes, or upload your Posts.csv instead.`,
+      error: `Could only read ${fetchedCount} post(s). LinkedIn may be rate-limiting. Try again in a few minutes.`,
       fetchedCount,
       failedCount,
     }, { status: 422 })
   }
 
-  // ── Run engagement-weighted style inference ──────────────────────────────
-  const inferredModel = await inferStyleFromAnalytics(postsWithText)
-
-  // ── Load current style model + onboarding path ──────────────────────────
-  const [{ data: currentStyleRow }, { data: profileRow }] = await Promise.all([
+  // ── Style inference + topic extraction in parallel ───────────────────────
+  const [inferredModel, contentInsights, currentStyleRow, profileRow] = await Promise.all([
+    inferStyleFromAnalytics(postsWithText),
+    extractContentInsights(postsWithText),
     supabase
       .from('style_models')
       .select('id, model, version')
       .eq('user_id', user.id)
       .eq('is_current', true)
-      .single(),
+      .single()
+      .then(r => r.data),
     supabase
       .from('user_profiles')
-      .select('onboarding_path')
+      .select('onboarding_path, audience_context')
       .eq('id', user.id)
-      .single(),
+      .single()
+      .then(r => r.data),
   ])
 
+  // ── Blending rule ─────────────────────────────────────────────────────────
+  // linkedin path → inferred model replaces (no prior manual preferences)
+  // manual path   → inferred wins 60/40 over stated preference
   const onboardingPath = profileRow?.onboarding_path ?? null
   const existingModel = currentStyleRow?.model ?? null
-
-  // Blending rule:
-  //   linkedin path → inferred data IS the model (no blend with old data)
-  //   manual path   → inferred data overrides stated preference 60/40
-  //   no path set   → same as manual (safe default)
   const finalModel = (existingModel && onboardingPath !== 'linkedin')
     ? blendStyleModels(existingModel, inferredModel, 0.4)
     : inferredModel
 
   const newVersion = (currentStyleRow?.version ?? 0) + 1
 
-  // ── Save new style model ─────────────────────────────────────────────────
+  // ── Save style model ──────────────────────────────────────────────────────
   await supabase
     .from('style_models')
     .update({ is_current: false })
@@ -127,13 +123,40 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Failed to save style model' }, { status: 500 })
   }
 
-  // Sample of fetched post previews for display
-  const postPreviews = postsWithText.slice(0, 5).map(p => ({
-    url: p.url,
-    textPreview: p.text.slice(0, 120) + (p.text.length > 120 ? '…' : ''),
-    engagementRate: p.engagementRate,
-    impressions: p.impressions,
-  }))
+  // ── Save topic insights to user profile ───────────────────────────────────
+  // topTopics → interests (Scout uses this for Reddit/news queries immediately)
+  // all insights → audience_context (Bridge uses for personalisation)
+  const updatedAudienceContext = {
+    ...(profileRow?.audience_context ?? {}),
+    contentInsights,
+    insightsUpdatedAt: new Date().toISOString(),
+  }
+
+  const profileUpdates: Record<string, unknown> = {
+    audience_context: updatedAudienceContext,
+    updated_at: new Date().toISOString(),
+  }
+
+  // Only overwrite interests if we found something meaningful
+  if (contentInsights.topTopics.length > 0) {
+    profileUpdates.interests = contentInsights.topTopics
+  }
+
+  await supabase
+    .from('user_profiles')
+    .update(profileUpdates)
+    .eq('id', user.id)
+
+  // ── Response ──────────────────────────────────────────────────────────────
+  const postPreviews = postsWithText
+    .sort((a, b) => b.engagementRate - a.engagementRate)
+    .slice(0, 5)
+    .map(p => ({
+      url: p.url,
+      textPreview: p.text.slice(0, 140) + (p.text.length > 140 ? '…' : ''),
+      engagementRate: p.engagementRate,
+      impressions: p.impressions,
+    }))
 
   return NextResponse.json({
     success: true,
@@ -142,6 +165,7 @@ export async function POST(request: Request) {
     styleModelUpdated: true,
     newVersion,
     styleModelId: newStyleRow.id,
+    contentInsights,
     postPreviews,
   })
 }

@@ -12,7 +12,8 @@
  * gives full post text programmatically.
  */
 
-const RATE_LIMIT_MS = 1100  // ~1 req/sec
+const BATCH_SIZE = 3       // concurrent requests per batch
+const BATCH_DELAY_MS = 2000 // pause between batches
 
 export interface ScrapedPost {
   url: string
@@ -22,23 +23,33 @@ export interface ScrapedPost {
 
 /**
  * Fetch content for a batch of LinkedIn post URLs.
+ * Processes BATCH_SIZE URLs concurrently, then pauses between batches.
+ * ~3 concurrent + 2s gap → 50 posts in ~20s instead of ~55s sequential.
  * Returns results in the same order as input, with empty text for failures.
  */
 export async function scrapeLinkedInPosts(
   urls: string[],
   onProgress?: (done: number, total: number) => void
 ): Promise<ScrapedPost[]> {
-  const results: ScrapedPost[] = []
+  const results: ScrapedPost[] = new Array(urls.length)
+  let done = 0
 
-  for (let i = 0; i < urls.length; i++) {
-    const url = urls[i]
-    const text = await fetchPostText(url)
-    results.push({ url, text, success: text.length > 0 })
-    onProgress?.(i + 1, urls.length)
+  for (let i = 0; i < urls.length; i += BATCH_SIZE) {
+    const batch = urls.slice(i, i + BATCH_SIZE)
 
-    // Rate limit — skip delay after last request
-    if (i < urls.length - 1) {
-      await sleep(RATE_LIMIT_MS)
+    const batchResults = await Promise.all(
+      batch.map(url => fetchPostText(url).then(text => ({ url, text, success: text.length > 0 })))
+    )
+
+    batchResults.forEach((result, j) => {
+      results[i + j] = result
+      done++
+      onProgress?.(done, urls.length)
+    })
+
+    // Pause between batches (skip after last batch)
+    if (i + BATCH_SIZE < urls.length) {
+      await sleep(BATCH_DELAY_MS)
     }
   }
 

@@ -83,6 +83,96 @@ Return JSON only — no explanation:
   }
 }
 
+// ─── Content Insights ────────────────────────────────────────────────────────
+
+export interface ContentInsights {
+  topTopics: string[]             // main topics the user posts about (up to 8)
+  highEngagementTopics: string[]  // topics found in above-median-engagement posts
+  contentFormats: string[]        // e.g. "personal stories", "data insights", "opinion"
+  audienceThemes: string[]        // broader themes that resonate with the audience
+}
+
+/**
+ * Extract topic and content insights from posts with engagement data.
+ * Run in parallel with inferStyleFromAnalytics — separate GPT call so each
+ * prompt is focused.
+ *
+ * High-engagement posts are shown first so GPT weights them more heavily
+ * when identifying what topics resonate vs. just what the user covers.
+ */
+export async function extractContentInsights(posts: TopPost[]): Promise<ContentInsights> {
+  const fallback: ContentInsights = {
+    topTopics: [], highEngagementTopics: [], contentFormats: [], audienceThemes: [],
+  }
+
+  const usable = posts.filter(p => p.text.length > 30)
+  if (usable.length < 2) return fallback
+
+  const median = [...usable].sort((a, b) => a.engagementRate - b.engagementRate)[Math.floor(usable.length / 2)]?.engagementRate ?? 0
+
+  const highEngagement = usable
+    .filter(p => p.engagementRate >= median)
+    .sort((a, b) => b.engagementRate - a.engagementRate)
+    .slice(0, 15)
+
+  const allPosts = usable.slice(0, 30)
+
+  const highEngBlock = highEngagement.map((p, i) =>
+    `[${p.engagementRate}% eng] Post ${i + 1}: ${p.text.slice(0, 300)}`
+  ).join('\n\n')
+
+  const allBlock = allPosts.map((p, i) =>
+    `Post ${i + 1}: ${p.text.slice(0, 200)}`
+  ).join('\n\n')
+
+  const prompt = `You are a content analyst. Analyse these LinkedIn posts and identify what this person writes about and what resonates with their audience.
+
+## High-engagement posts (above median — these are what the audience responds to)
+${highEngBlock}
+
+## Full post sample
+${allBlock}
+
+## Instructions
+- topTopics: the main subjects/themes this person covers across all posts (up to 8)
+- highEngagementTopics: topics that appear specifically in the high-engagement posts — what the AUDIENCE responds to (up to 6)
+- contentFormats: how they structure content, e.g. "personal stories", "data-driven analysis", "hot takes / opinion", "how-to guides", "industry commentary", "behind-the-scenes" (up to 4)
+- audienceThemes: broader themes that connect their top-performing content, e.g. "career transitions", "leadership lessons", "AI impact on work" (up to 4)
+
+Be specific — avoid generic terms like "business" or "content". Use terms like "AI in enterprise", "first-generation founder challenges", "remote team leadership".
+
+Return JSON only:
+{
+  "topTopics": [...],
+  "highEngagementTopics": [...],
+  "contentFormats": [...],
+  "audienceThemes": [...]
+}`
+
+  try {
+    const response = await azureClient.chat.completions.create({
+      model: DEPLOYMENT,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 400,
+      temperature: 0.3,
+    })
+
+    const text = response.choices[0]?.message?.content ?? ''
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return fallback
+
+    const raw = JSON.parse(jsonMatch[0])
+    return {
+      topTopics:            Array.isArray(raw.topTopics)            ? raw.topTopics.slice(0, 8)  : [],
+      highEngagementTopics: Array.isArray(raw.highEngagementTopics) ? raw.highEngagementTopics.slice(0, 6) : [],
+      contentFormats:       Array.isArray(raw.contentFormats)       ? raw.contentFormats.slice(0, 4) : [],
+      audienceThemes:       Array.isArray(raw.audienceThemes)       ? raw.audienceThemes.slice(0, 4) : [],
+    }
+  } catch {
+    return fallback
+  }
+}
+
 /**
  * Blend onboarding answers (intent) and CSV inference (revealed behavior).
  * Weight: 70% onboarding, 30% inferred from posts.

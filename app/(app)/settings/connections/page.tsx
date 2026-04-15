@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Loader2, Upload, BarChart2, Users, TrendingUp, CheckCircle, ExternalLink } from 'lucide-react'
+import { Loader2, Upload, BarChart2, Users, TrendingUp, CheckCircle, ExternalLink, Sparkles } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Badge } from '@/components/ui/Badge'
 import LinkedInConnectButton from '@/components/LinkedInConnectButton'
@@ -295,7 +295,53 @@ export default function ConnectionsPage() {
 
 // ── Success state ─────────────────────────────────────────────────────────────
 
+interface PostPreview {
+  url: string
+  textPreview: string
+  engagementRate: number
+  impressions: number
+}
+
+interface FetchResult {
+  fetchedCount: number
+  failedCount: number
+  newVersion: number
+  postPreviews: PostPreview[]
+}
+
 function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onReset: () => void }) {
+  const [fetching, setFetching] = useState(false)
+  const [fetchProgress, setFetchProgress] = useState('')
+  const [fetchResult, setFetchResult] = useState<FetchResult | null>(null)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+
+  async function handleFetchContent() {
+    if (!result.topPostsDisplay?.length) return
+    setFetching(true)
+    setFetchError(null)
+    setFetchProgress('Fetching post content from LinkedIn…')
+
+    try {
+      const res = await fetch('/api/connections/linkedin/fetch-post-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ posts: result.topPostsDisplay, maxPosts: 20 }),
+      })
+      const data = await res.json()
+
+      if (!res.ok) {
+        setFetchError(data.error ?? 'Fetch failed')
+      } else {
+        setFetchResult(data as FetchResult)
+      }
+    } catch {
+      setFetchError('Network error. Try again.')
+    } finally {
+      setFetching(false)
+      setFetchProgress('')
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Summary banner */}
@@ -355,11 +401,63 @@ function AnalyticsImportSuccess({ result, onReset }: { result: ImportResult; onR
         </div>
       )}
 
-      {/* Note about style model */}
-      {result.note && (
-        <p className="text-xs text-amber-400/80 bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2">
-          {result.note}
-        </p>
+      {/* Fetch content + train style model */}
+      {!fetchResult ? (
+        <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl space-y-2">
+          <div className="flex items-start gap-2">
+            <Sparkles className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-indigo-300">Train your style model</p>
+              <p className="text-xs text-indigo-400/70 mt-0.5">
+                We&apos;ll fetch the text from your top {Math.min(result.topPostsDisplay?.length ?? 0, 20)} posts,
+                weight them by engagement rate, and update your style model.
+                Takes ~{Math.ceil(Math.min(result.topPostsDisplay?.length ?? 0, 20) * 1.1 / 60)} min.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={handleFetchContent}
+            disabled={fetching}
+            className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            {fetching ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {fetchProgress || 'Fetching posts…'}
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                Fetch posts &amp; train style model
+              </>
+            )}
+          </button>
+          {fetchError && <p className="text-xs text-red-400">{fetchError}</p>}
+        </div>
+      ) : (
+        <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl space-y-3">
+          <div className="flex items-start gap-2">
+            <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-emerald-300">Style model updated (v{fetchResult.newVersion})</p>
+              <p className="text-xs text-emerald-400/70 mt-0.5">
+                Read {fetchResult.fetchedCount} posts
+                {fetchResult.failedCount > 0 ? ` · ${fetchResult.failedCount} skipped (private/unavailable)` : ''}
+              </p>
+            </div>
+          </div>
+          {fetchResult.postPreviews?.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="text-xs text-slate-400 font-medium">Posts used for training</p>
+              {fetchResult.postPreviews.map((p, i) => (
+                <div key={i} className="flex items-start gap-2 px-2 py-1.5 bg-slate-800/60 rounded-lg">
+                  <span className="text-xs text-emerald-400 font-medium shrink-0">{p.engagementRate}%</span>
+                  <p className="text-xs text-slate-400 leading-relaxed">{p.textPreview}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       <button onClick={onReset} className="text-xs text-slate-500 hover:text-slate-400 transition-colors">

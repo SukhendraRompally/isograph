@@ -84,7 +84,7 @@ export default function OnboardingLinkedInImportPage() {
       setStep('fetching')
       setParseProgress('')
 
-      await fetchPostContent(parsed.topPosts.slice(0, 20) as TopPost[])
+      await fetchPostContent(parsed.topPosts as TopPost[])
 
     } catch (err) {
       console.error(err)
@@ -110,7 +110,7 @@ export default function OnboardingLinkedInImportPage() {
     const res = await fetch('/api/connections/linkedin/fetch-post-content', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ posts: postData, maxPosts: 20 }),
+      body: JSON.stringify({ posts: postData }),
     })
 
     const data = await res.json()

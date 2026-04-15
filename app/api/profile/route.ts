@@ -75,7 +75,7 @@ export async function PUT(request: Request) {
   const allowed = [
     'display_name', 'headline', 'industry', 'interests',
     'personal_constraints', 'location', 'avatar_url',
-    'onboarding_path', 'audience_context',
+    'onboarding_path', 'audience_context', 'onboarding_completed',
   ]
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowed) {

@@ -9,14 +9,15 @@ export async function POST() {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   // Scout doesn't consume post quota — it's a discovery operation
-  // But check subscription is active
+  // Default to active if no subscription row exists yet (new users)
   const { data: sub } = await supabase
     .from('subscriptions')
     .select('plan, status')
     .eq('user_id', user.id)
     .single()
 
-  if (sub?.status !== 'active' && sub?.status !== 'trialing') {
+  const subStatus = sub?.status ?? 'active'
+  if (subStatus !== 'active' && subStatus !== 'trialing') {
     return NextResponse.json({ error: 'Subscription is not active.' }, { status: 403 })
   }
 

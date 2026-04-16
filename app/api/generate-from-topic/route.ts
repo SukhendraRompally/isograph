@@ -3,7 +3,6 @@ import { NextResponse } from 'next/server'
 import { getAzureClient, DEPLOYMENT } from '@/lib/azureClient'
 import { runBridge } from '@/lib/agents/bridge'
 import { runGuardian } from '@/lib/agents/guardian'
-import { checkPostQuota, incrementPostUsage } from '@/lib/usageLimits'
 import type { UserProfile, PersonalOpportunity } from '@/types'
 
 /**
@@ -27,12 +26,6 @@ export async function POST(request: Request) {
 
   if (!topicInput || topicInput.length < 3) {
     return NextResponse.json({ error: 'Topic is required' }, { status: 400 })
-  }
-
-  // ── Quota check ───────────────────────────────────────────────────────────
-  const quota = await checkPostQuota(user.id)
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message ?? 'Post quota reached' }, { status: 429 })
   }
 
   // ── Fetch user profile + style model ─────────────────────────────────────
@@ -111,8 +104,6 @@ export async function POST(request: Request) {
     console.error('Post insert error:', postError)
     return NextResponse.json({ error: 'Failed to save draft' }, { status: 500 })
   }
-
-  await incrementPostUsage(user.id)
 
   return NextResponse.json({
     post: { id: post.id },

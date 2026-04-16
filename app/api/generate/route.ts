@@ -2,18 +2,12 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { runBridge } from '@/lib/agents/bridge'
 import { runGuardian } from '@/lib/agents/guardian'
-import { checkPostQuota, incrementPostUsage } from '@/lib/usageLimits'
 import { UserProfile, ContentOpportunity, StyleModel } from '@/types'
 
 export async function POST(request: Request) {
   const supabase = createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const quota = await checkPostQuota(user.id)
-  if (!quota.allowed) {
-    return NextResponse.json({ error: quota.message }, { status: 429 })
-  }
 
   const body = await request.json()
   const opportunity = body.opportunity as ContentOpportunity
@@ -78,9 +72,6 @@ export async function POST(request: Request) {
       .single()
 
     if (postError) throw postError
-
-    // Increment quota after successful generation
-    await incrementPostUsage(user.id)
 
     return NextResponse.json({ post, content, guardian })
   } catch (err) {

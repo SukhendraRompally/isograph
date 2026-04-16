@@ -6,6 +6,7 @@ import { Upload, Loader2, CheckCircle, Sparkles, ArrowRight, ExternalLink } from
 import type { AnalyticsImportData, TopPost } from '@/lib/linkedin/parseAnalyticsXls'
 
 type Step = 'upload' | 'fetching' | 'done'
+type FetchProgress = 'scraping' | 'inferring' | 'saving'
 
 interface TopPostDisplay {
   url: string
@@ -31,6 +32,7 @@ export default function OnboardingLinkedInImportPage() {
   const [topPosts, setTopPosts] = useState<TopPostDisplay[]>([])
   const [fetchResult, setFetchResult] = useState<FetchResult | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [fetchProgress, setFetchProgress] = useState<FetchProgress>('scraping')
 
   const [personalConstraints, setPersonalConstraints] = useState('')
   const [saving, setSaving] = useState(false)
@@ -82,6 +84,7 @@ export default function OnboardingLinkedInImportPage() {
 
       // Immediately kick off content fetch + style inference
       setStep('fetching')
+      setFetchProgress('scraping')
       setParseProgress('')
 
       await fetchPostContent(parsed.topPosts as TopPost[])
@@ -98,6 +101,7 @@ export default function OnboardingLinkedInImportPage() {
   // ── Step 2: server fetches post text + runs style inference ───────────────
   async function fetchPostContent(posts: TopPost[]) {
     setFetchError(null)
+    setFetchProgress('scraping')
 
     const postData = posts.map(p => ({
       url: p.url,
@@ -107,11 +111,18 @@ export default function OnboardingLinkedInImportPage() {
       publishedDate: p.publishedDate,
     }))
 
+    // Simulate progress transitions while the request is in-flight
+    const progressTimer = setTimeout(() => setFetchProgress('inferring'), 18000)
+    const savingTimer = setTimeout(() => setFetchProgress('saving'), 38000)
+
     const res = await fetch('/api/connections/linkedin/fetch-post-content', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ posts: postData }),
     })
+
+    clearTimeout(progressTimer)
+    clearTimeout(savingTimer)
 
     const data = await res.json()
 
@@ -119,6 +130,7 @@ export default function OnboardingLinkedInImportPage() {
       setFetchError(data.error ?? 'Could not read post content.')
       setStep('upload')  // allow retry
     } else {
+      setFetchProgress('saving')
       setFetchResult(data as FetchResult)
       setStep('done')
     }
@@ -221,17 +233,50 @@ export default function OnboardingLinkedInImportPage() {
           )}
 
           {step === 'fetching' && (
-            <div className="py-6 flex flex-col items-center gap-3 text-center">
+            <div className="py-4 flex flex-col items-center gap-4 text-center">
               <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center">
                 <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
               </div>
-              <div>
-                <p className="text-sm font-medium text-slate-200">Reading your posts…</p>
-                <p className="text-xs text-slate-500 mt-1">
-                  Fetching content from your top posts and inferring your writing style.
-                  This takes about 30–60 seconds.
-                </p>
+
+              {/* Step-by-step progress */}
+              <div className="w-full space-y-2.5">
+                {[
+                  { key: 'scraping', label: 'Reading your LinkedIn posts', sub: 'Fetching post content from each URL' },
+                  { key: 'inferring', label: 'Analysing your writing style', sub: 'Weighting posts by engagement rate' },
+                  { key: 'saving', label: 'Building your style model', sub: 'Saving to your profile' },
+                ].map(({ key, label, sub }) => {
+                  const stepOrder = ['scraping', 'inferring', 'saving']
+                  const currentIdx = stepOrder.indexOf(fetchProgress)
+                  const thisIdx = stepOrder.indexOf(key)
+                  const isDone = thisIdx < currentIdx
+                  const isActive = thisIdx === currentIdx
+
+                  return (
+                    <div key={key} className={`flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors ${
+                      isActive ? 'bg-indigo-500/10 border border-indigo-500/20' : 'opacity-40'
+                    }`}>
+                      <div className={`w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center mt-0.5 ${
+                        isDone ? 'bg-emerald-500/20' : isActive ? 'bg-indigo-500/20' : 'bg-slate-700'
+                      }`}>
+                        {isDone ? (
+                          <CheckCircle className="w-3 h-3 text-emerald-400" />
+                        ) : isActive ? (
+                          <Loader2 className="w-3 h-3 text-indigo-400 animate-spin" />
+                        ) : (
+                          <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                        )}
+                      </div>
+                      <div className="text-left">
+                        <p className={`text-xs font-medium ${isActive ? 'text-slate-200' : 'text-slate-400'}`}>{label}</p>
+                        <p className="text-xs text-slate-500 mt-0.5">{sub}</p>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
+
+              <p className="text-xs text-slate-600">Takes 30–60 seconds for a full post history</p>
+
               {fetchError && (
                 <div className="w-full">
                   <p className="text-xs text-red-400 mb-2">{fetchError}</p>

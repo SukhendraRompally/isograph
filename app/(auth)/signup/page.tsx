@@ -44,7 +44,7 @@ export default function SignupPage() {
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8">
           <h1 className="text-lg font-bold text-slate-100 mb-1">Create your account</h1>
-          <p className="text-xs text-slate-400 mb-6">Free forever · No credit card required</p>
+          <p className="text-xs text-slate-400 mb-6">No credit card required</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

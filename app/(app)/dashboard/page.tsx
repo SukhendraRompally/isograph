@@ -12,7 +12,7 @@ export default async function DashboardPage() {
   const [{ data: profile }, { data: sub }, { data: recentPosts }, { data: analyticsRows }] = await Promise.all([
     supabase.from('user_profiles').select('display_name, onboarding_completed').eq('id', user.id).single(),
     supabase.from('subscriptions').select('plan, ai_posts_used_this_period').eq('user_id', user.id).single(),
-    supabase.from('posts').select('id, published_content, was_edited, published_at, status').eq('user_id', user.id).order('created_at', { ascending: false }).limit(5),
+    supabase.from('posts').select('id, published_content, was_edited, published_at, status').eq('user_id', user.id).eq('status', 'published').order('published_at', { ascending: false }).limit(5),
     supabase.from('post_analytics').select('impressions, reactions, comments, engagement_rate').eq('user_id', user.id),
   ])
 

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { createLinkedInPost } from '@/lib/linkedin/client'
 import { publishJob } from '@/lib/qstash/client'
+import { checkPostQuota, incrementPostUsage } from '@/lib/usageLimits'
 
 export async function POST(request: Request) {
   const supabase = createClient()
@@ -26,6 +27,12 @@ export async function POST(request: Request) {
 
   if (!post) return NextResponse.json({ error: 'Post not found' }, { status: 404 })
   if (post.status === 'published') return NextResponse.json({ error: 'Already published' }, { status: 409 })
+
+  // Quota check at publish time — only count posts that actually go live
+  const quota = await checkPostQuota(user.id)
+  if (!quota.allowed) {
+    return NextResponse.json({ error: quota.message }, { status: 429 })
+  }
 
   // Get LinkedIn connection
   const { data: connection } = await supabase
@@ -71,6 +78,9 @@ export async function POST(request: Request) {
         .eq('id', post.opportunity_id)
         .eq('user_id', user.id)
     }
+
+    // Count this as used now that it's live
+    await incrementPostUsage(user.id)
 
     // Queue analytics fetch after 24 hours
     const appUrl = process.env.NEXT_PUBLIC_APP_URL

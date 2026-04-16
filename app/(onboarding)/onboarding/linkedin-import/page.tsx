@@ -195,13 +195,27 @@ export default function OnboardingLinkedInImportPage() {
           {/* XLS upload / progress / result */}
           {step === 'upload' && (
             <div className="space-y-3">
-              <div className="p-3 bg-slate-800/60 rounded-lg border border-slate-700/50">
-                <p className="text-xs font-medium text-slate-300 mb-2">How to get your export:</p>
-                <ol className="text-xs text-slate-400 space-y-1 list-decimal list-inside">
-                  <li>LinkedIn profile → <strong className="text-slate-300">Creator mode analytics</strong></li>
-                  <li>Click <strong className="text-slate-300">Export</strong> → select last 365 days</li>
-                  <li>Download the .xlsx and upload below</li>
+              <div className="p-4 bg-slate-800/60 rounded-xl border border-slate-700/50 space-y-3">
+                <p className="text-xs font-semibold text-slate-300">How to download your LinkedIn analytics</p>
+                <ol className="space-y-2.5">
+                  {[
+                    { n: '1', text: 'Go to your LinkedIn profile and click \u201cView Profile\u201d' },
+                    { n: '2', text: 'Scroll down to the \u201cAnalytics\u201d section and click \u201cShow all analytics\u201d' },
+                    { n: '3', text: 'Click on your \u201cPost impressions\u201d number to open your post analytics' },
+                    { n: '4', text: 'Set the date range to the last 365 days using the dropdown at the top' },
+                    { n: '5', text: 'Click the \u201cExport\u201d button in the top-right corner to download the .xlsx file' },
+                  ].map(step => (
+                    <li key={step.n} className="flex items-start gap-2.5">
+                      <span className="w-4 h-4 rounded-full bg-indigo-600/30 text-indigo-400 text-[10px] font-bold flex items-center justify-center flex-shrink-0 mt-0.5">
+                        {step.n}
+                      </span>
+                      <span className="text-xs text-slate-400 leading-relaxed">{step.text}</span>
+                    </li>
+                  ))}
                 </ol>
+                <p className="text-xs text-slate-600 pt-1 border-t border-slate-700/50">
+                  The file will be named something like <span className="text-slate-500 font-mono">LinkedIn_Analytics_...xlsx</span>
+                </p>
               </div>
 
               <label className={`flex flex-col items-center justify-center gap-2 px-4 py-5

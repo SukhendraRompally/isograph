@@ -58,7 +58,7 @@ export default function LandingPage() {
             {
               icon: TrendingUp,
               title: 'Learns your style',
-              body: 'Answer 8 questions to create your style model. Isograph refines it every time you publish, edit, or get engagement.',
+              body: 'Upload your LinkedIn analytics export and Isograph builds your style model from your actual post history — weighted by what earned the most engagement from your audience.',
             },
             {
               icon: Zap,
